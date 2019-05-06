@@ -1,0 +1,7 @@
+x64/
+VulkanTest/x64/
+.vs/
+*.user
+
+# shaders compiled into SPIR-V
+*.spv
