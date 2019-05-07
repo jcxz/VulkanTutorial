@@ -320,6 +320,7 @@ private:
 		appInfo.applicationVersion = VK_MAKE_VERSION(1, 0, 0);
 		appInfo.pEngineName = "No Engine";
 		appInfo.engineVersion = VK_MAKE_VERSION(1, 0, 0);
+		// must be the highest version of Vulkan that the application is designed to use
 		appInfo.apiVersion = VK_API_VERSION_1_0;
 
 		// tato struktura nie je optional a hovori driveru, ktore global extensions a validation layers bude program pouzivat
@@ -467,6 +468,70 @@ private:
 		}
 
 		return indices.isComplete() && extensionsSupported && swapChainAdequate;
+	}
+
+	QueueFamilyIndices findQueueFamilies(const VkPhysicalDevice device)
+	{
+		QueueFamilyIndices indices;
+
+		uint32_t queueFamilyCount = 0;
+		vkGetPhysicalDeviceQueueFamilyProperties(device, &queueFamilyCount, nullptr);
+
+		std::vector<VkQueueFamilyProperties> queueFamilies(queueFamilyCount);
+		vkGetPhysicalDeviceQueueFamilyProperties(device, &queueFamilyCount, queueFamilies.data());
+
+		// print information about all available queue families
+		std::cout << "\tQueue Flags | Queue count | timestamp | transfer Granularity" << std::endl;
+		for (const VkQueueFamilyProperties& family : queueFamilies)
+		{
+			std::cout << "\t(" << queueFlagsToString(family.queueFlags) << ") | " << family.queueCount << " | " << family.timestampValidBits << " | " << family.minImageTransferGranularity << std::endl;
+		}
+
+		int i = 0;
+		for (const auto& queueFamily : queueFamilies)
+		{
+			if (queueFamily.queueCount > 0)
+			{
+				if (queueFamily.queueFlags & VK_QUEUE_GRAPHICS_BIT)
+					indices.graphicsFamily = i;
+
+				VkBool32 presentSupport = false;
+				vkGetPhysicalDeviceSurfaceSupportKHR(device, i, m_surface, &presentSupport);
+
+				if (presentSupport)
+					indices.presentFamily = i;
+			}
+
+			if (indices.isComplete())
+			{
+				break;
+			}
+
+			++i;
+		}
+
+		return indices;
+	}
+
+	bool checkDeviceExtensionSupport(const VkPhysicalDevice device)
+	{
+		uint32_t extensionCount;
+		vkEnumerateDeviceExtensionProperties(device, nullptr, &extensionCount, nullptr);
+
+		std::vector<VkExtensionProperties> availableExtensions(extensionCount);
+		vkEnumerateDeviceExtensionProperties(device, nullptr, &extensionCount, availableExtensions.data());
+
+		std::set<std::string> requiredExtensions(g_deviceExtensions, g_deviceExtensions + g_deviceExtensionsCount);
+
+		std::cout << "Vulkan Device Extensions:" << std::endl;
+		std::cout << "\tName | version" << std::endl;
+		for (const auto& extension : availableExtensions)
+		{
+			std::cout << "\t" << extension.extensionName << " | " << extension.specVersion << std::endl;
+			requiredExtensions.erase(extension.extensionName);
+		}
+
+		return requiredExtensions.empty();
 	}
 
 	SwapChainSupportDetails querySwapChainSupport(const VkPhysicalDevice device)
@@ -627,70 +692,6 @@ private:
 			actualExtent.height = std::clamp(actualExtent.height, capabilities.minImageExtent.height, capabilities.maxImageExtent.height);
 			return actualExtent;
 		}
-	}
-
-	bool checkDeviceExtensionSupport(const VkPhysicalDevice device)
-	{
-		uint32_t extensionCount;
-		vkEnumerateDeviceExtensionProperties(device, nullptr, &extensionCount, nullptr);
-
-		std::vector<VkExtensionProperties> availableExtensions(extensionCount);
-		vkEnumerateDeviceExtensionProperties(device, nullptr, &extensionCount, availableExtensions.data());
-
-		std::set<std::string> requiredExtensions(g_deviceExtensions, g_deviceExtensions + g_deviceExtensionsCount);
-
-		std::cout << "Vulkan Device Extensions:" << std::endl;
-		std::cout << "\tName | version" << std::endl;
-		for (const auto& extension : availableExtensions)
-		{
-			std::cout << "\t" << extension.extensionName << " | " << extension.specVersion << std::endl;
-			requiredExtensions.erase(extension.extensionName);
-		}
-
-		return requiredExtensions.empty();
-	}
-
-	QueueFamilyIndices findQueueFamilies(const VkPhysicalDevice device)
-	{
-		QueueFamilyIndices indices;
-
-		uint32_t queueFamilyCount = 0;
-		vkGetPhysicalDeviceQueueFamilyProperties(device, &queueFamilyCount, nullptr);
-
-		std::vector<VkQueueFamilyProperties> queueFamilies(queueFamilyCount);
-		vkGetPhysicalDeviceQueueFamilyProperties(device, &queueFamilyCount, queueFamilies.data());
-
-		// print information about all available queue families
-		std::cout << "\tQueue Flags | Queue count | timestamp | transfer Granularity" << std::endl;
-		for (const VkQueueFamilyProperties& family : queueFamilies)
-		{
-			std::cout << "\t(" << queueFlagsToString(family.queueFlags) << ") | " << family.queueCount << " | " << family.timestampValidBits << " | " << family.minImageTransferGranularity << std::endl;
-		}
-
-		int i = 0;
-		for (const auto& queueFamily : queueFamilies)
-		{
-			if (queueFamily.queueCount > 0)
-			{
-				if (queueFamily.queueFlags & VK_QUEUE_GRAPHICS_BIT)
-					indices.graphicsFamily = i;
-
-				VkBool32 presentSupport = false;
-				vkGetPhysicalDeviceSurfaceSupportKHR(device, i, m_surface, &presentSupport);
-
-				if (presentSupport)
-					indices.presentFamily = i;
-			}
-
-			if (indices.isComplete())
-			{
-				break;
-			}
-
-			++i;
-		}
-
-		return indices;
 	}
 
 	void createLogicalDevice()
