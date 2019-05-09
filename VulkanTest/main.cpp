@@ -667,7 +667,7 @@ private:
 		for (const auto& availablePresentMode : availablePresentModes)
 		{
 			// VK_PRESENT_MODE_MAILBOX_KHR should basically be tripple buffering
-			// a;lways prefer this one
+			// always prefer this one
 			if (availablePresentMode == VK_PRESENT_MODE_MAILBOX_KHR)
 			{
 				return availablePresentMode;
