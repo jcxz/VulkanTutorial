@@ -1302,6 +1302,8 @@ private:
 		//****
 		//*** acquire the first swap chain image
 		uint32_t imageIndex;
+		// one does not have to wait before calling vkAcquireNextImageKHR, it will automatically wait for an image to be available.
+		// Tato horna veta teda asi znamena aj to, ze netreba cakat na vkQueuePresentKHR kym sa dokonci, lebo to sa pred zacatim noveho frejmu deje automaticky
 		res = vkAcquireNextImageKHR(m_device, m_swapChain, std::numeric_limits<uint64_t>::max(), m_imageAvailableSemaphores[m_currentFrame], VK_NULL_HANDLE, &imageIndex);
 		if (res == VK_ERROR_OUT_OF_DATE_KHR)
 		{
