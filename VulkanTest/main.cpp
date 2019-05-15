@@ -466,6 +466,7 @@ private:
 		bool swapChainAdequate = false;
 		if (extensionsSupported)
 		{
+			// Just checking if a swap chain is available is not sufficient, because it may not actually be compatible with our window surface.
 			SwapChainSupportDetails swapChainSupport = querySwapChainSupport(device);
 			swapChainAdequate = !swapChainSupport.formats.empty() && !swapChainSupport.presentModes.empty();
 		}
@@ -606,7 +607,7 @@ private:
 		}
 		else
 		{
-			// An image is owned by one queue family at a time and ownership must be explicitly transfered before using it in another queue family.This option offers the best performance.
+			// An image is owned by one queue family at a time and ownership must be explicitly transfered before using it in another queue family. This option offers the best performance.
 			createInfo.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
 			createInfo.queueFamilyIndexCount = 0;       // Optional
 			createInfo.pQueueFamilyIndices = nullptr;   // Optional
@@ -1017,11 +1018,14 @@ private:
 		VkAttachmentDescription colorAttachment = { };
 		colorAttachment.format = m_swapChainImageFormat;
 		colorAttachment.samples = VK_SAMPLE_COUNT_1_BIT;
+		// The loadOp and storeOp determine what to do with the data in the attachment before rendering and after rendering.
 		// The loadOp and storeOp apply to color and depth data
-		// VK_ATTACHMENT_LOAD_OP_LOAD: Preserve the existing contents of the attachment
-		// VK_ATTACHMENT_LOAD_OP_CLEAR : Clear the values to a constant at the start
-		// VK_ATTACHMENT_LOAD_OP_DONT_CARE : Existing contents are undefined; we don't care about them
+		//  VK_ATTACHMENT_LOAD_OP_LOAD: Preserve the existing contents of the attachment
+		//  VK_ATTACHMENT_LOAD_OP_CLEAR : Clear the values to a constant at the start
+		//  VK_ATTACHMENT_LOAD_OP_DONT_CARE : Existing contents are undefined; we don't care about them
 		colorAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+		//  VK_ATTACHMENT_STORE_OP_STORE: Rendered contents will be stored in memory and can be read later
+		//  VK_ATTACHMENT_STORE_OP_DONT_CARE: Contents of the framebuffer will be undefined after the rendering
 		colorAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
 		// stencilLoadOp / stencilStoreOp apply to stencil data
 		colorAttachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
