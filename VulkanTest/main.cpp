@@ -1224,6 +1224,10 @@ private:
 		VkMemoryAllocateInfo allocInfo = { };
 		allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
 		allocInfo.allocationSize = memRequirements.size;
+		// GPU moze citat aj z pamate, ktora je HOST_VISIBLE, ale ide to cez PCI-E ... takze je to brutal pomale
+		// pripadne podla niektorych zdrojov su data nacitane z tejto pamate cacheovane na GPU (L2 cache ???),
+		// takze pre nejake male data by to nemal byt az taky velky problem. Tie sa raz nacitaju a nacacheuju
+		// a potom sa uz na GPU citaju relativne rychlo, ale tento typ pamate rozhodne nie je idealny na velke kusy dat ...
 		allocInfo.memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
 
 		res = vkAllocateMemory(m_device, &allocInfo, nullptr, &m_vertexBufferMemory);
