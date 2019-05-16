@@ -71,9 +71,15 @@ struct Vertex
 
 const std::vector<Vertex> g_vertices =
 {
-	{ {  0.0f, -0.5f }, { 1.0f, 0.0f, 0.0f } },
-	{ {  0.5f,  0.5f }, { 0.0f, 1.0f, 0.0f } },
-	{ { -0.5f,  0.5f }, { 0.0f, 0.0f, 1.0f } }
+	{ { -0.5f, -0.5f }, { 1.0f, 0.0f, 0.0f } },
+	{ {  0.5f, -0.5f }, { 0.0f, 1.0f, 0.0f } },
+	{ {  0.5f,  0.5f }, { 0.0f, 0.0f, 1.0f } },
+	{ { -0.5f,  0.5f }, { 1.0f, 1.0f, 1.0f } }
+};
+
+const std::vector<uint16_t> g_indices =
+{
+	0, 1, 2, 2, 3, 0
 };
 
 static std::vector<char> readFile(const std::string& filename)
@@ -365,6 +371,9 @@ private:
 
 		std::cout << "*** Creating Vertex Buffer ..." << std::endl;
 		createVertexBuffer();
+
+		std::cout << "*** Creating Index Buffer ..." << std::endl;
+		createIndexBuffer();
 
 		std::cout << "*** Creating Command Buffers ..." << std::endl;
 		createCommandBuffers();
@@ -1300,6 +1309,27 @@ private:
 		vkFreeMemory(m_device, stagingBufferMemory, nullptr);
 	}
 
+	void createIndexBuffer()
+	{
+		VkDeviceSize bufferSize = sizeof(g_indices[0]) * g_indices.size();
+
+		VkBuffer stagingBuffer;
+		VkDeviceMemory stagingBufferMemory;
+		createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, stagingBuffer, stagingBufferMemory);
+
+		void* data;
+		vkMapMemory(m_device, stagingBufferMemory, 0, bufferSize, 0, &data);
+		memcpy(data, g_indices.data(), (size_t)bufferSize);
+		vkUnmapMemory(m_device, stagingBufferMemory);
+
+		createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, m_indexBuffer, m_indexBufferMemory);
+
+		copyBuffer(stagingBuffer, m_indexBuffer, bufferSize);
+
+		vkDestroyBuffer(m_device, stagingBuffer, nullptr);
+		vkFreeMemory(m_device, stagingBufferMemory, nullptr);
+	}
+
 	void createCommandBuffers()
 	{
 		m_commandBuffers.resize(m_swapChainFramebuffers.size());
@@ -1364,7 +1394,9 @@ private:
 			VkDeviceSize offsets[] = { 0 };
 			vkCmdBindVertexBuffers(m_commandBuffers[i], 0, 1, vertexBuffers, offsets);
 
-			vkCmdDraw(m_commandBuffers[i], static_cast<uint32_t>(g_vertices.size()), 1, 0, 0);
+			vkCmdBindIndexBuffer(m_commandBuffers[i], m_indexBuffer, 0, VK_INDEX_TYPE_UINT16);
+
+			vkCmdDrawIndexed(m_commandBuffers[i], static_cast<uint32_t>(g_indices.size()), 1, 0, 0, 0);
 
 			vkCmdEndRenderPass(m_commandBuffers[i]);
 
@@ -1590,6 +1622,9 @@ private:
 
 		vkDestroyCommandPool(m_device, m_commandPool, nullptr);
 
+		vkDestroyBuffer(m_device, m_indexBuffer, nullptr);
+		vkFreeMemory(m_device, m_indexBufferMemory, nullptr);
+
 		vkDestroyBuffer(m_device, m_vertexBuffer, nullptr);
 		// Memory that is bound to a buffer object may be freed once the buffer is no longer used, so let's free it after the buffer has been destroyed.
 		vkFreeMemory(m_device, m_vertexBufferMemory, nullptr);
@@ -1767,6 +1802,11 @@ private:
 	VkBuffer m_vertexBuffer;
 	// memory for the vertex buffer
 	VkDeviceMemory m_vertexBufferMemory;
+
+	// a buffer to hold indices of the mesh
+	VkBuffer m_indexBuffer;
+	// the actual memory allocated for the indices
+	VkDeviceMemory m_indexBufferMemory;
 };
 
 
