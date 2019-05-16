@@ -1,10 +1,12 @@
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
+#include <glm/glm.hpp>
 
 #include <iostream>
 #include <stdexcept>
 #include <functional>
 #include <cstdlib>
+#include <array>
 #include <vector>
 #include <set>
 #include <optional>
@@ -12,6 +14,67 @@
 #include <algorithm>
 #include <fstream>
 
+
+struct Vertex
+{
+	glm::vec2 pos;
+	glm::vec3 color;
+
+	static VkVertexInputBindingDescription getBindingDescription()
+	{
+		VkVertexInputBindingDescription bindingDescription = { };
+		// All of our per-vertex data is packed together in one array, so we're only going to have one binding.
+		// The binding parameter specifies the index of the binding in the array of bindings.
+		bindingDescription.binding = 0;
+		// The stride parameter specifies the number of bytes from one entry to the next
+		bindingDescription.stride = sizeof(Vertex);
+		// VK_VERTEX_INPUT_RATE_VERTEX: Move to the next data entry after each vertex
+		// VK_VERTEX_INPUT_RATE_INSTANCE : Move to the next data entry after each instance
+		bindingDescription.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+		return bindingDescription;
+	}
+
+	static std::array<VkVertexInputAttributeDescription, 2> getAttributeDescriptions()
+	{
+		std::array<VkVertexInputAttributeDescription, 2> attributeDescriptions = { };
+
+		// The binding parameter tells Vulkan from which binding the per-vertex data comes.
+		attributeDescriptions[0].binding = 0;
+		// The location parameter references the location directive of the input in the vertex shader. 
+		attributeDescriptions[0].location = 0;
+		// The format parameter describes the type of data for the attribute.
+		// A bit confusingly, the formats are specified using the same enumeration as color formats.
+		// The following shader types and formats are commonly used together:
+		//   float: VK_FORMAT_R32_SFLOAT
+		//   vec2 : VK_FORMAT_R32G32_SFLOAT
+		//   vec3 : VK_FORMAT_R32G32B32_SFLOAT
+		//   vec4 : VK_FORMAT_R32G32B32A32_SFLOAT
+		// As you can see, you should use the format where the amount of color channels matches the number of components in the shader data type.
+		// It is allowed to use more channels than the number of components in the shader, but they will be silently discarded.
+		// If the number of channels is lower than the number of components, then the BGA components will use default values of (0, 0, 1).
+		// The color type (SFLOAT, UINT, SINT) and bit width should also match the type of the shader input. See the following examples:
+		//   ivec2: VK_FORMAT_R32G32_SINT, a 2 - component vector of 32 - bit signed integers
+		//   uvec4 : VK_FORMAT_R32G32B32A32_UINT, a 4 - component vector of 32 - bit unsigned integers
+		//   double : VK_FORMAT_R64_SFLOAT, a double - precision(64 - bit) float
+		attributeDescriptions[0].format = VK_FORMAT_R32G32_SFLOAT;
+		// The format parameter implicitly defines the byte size of attribute data and the offset parameter specifies the number of bytes since the start of the per-vertex data to read from.
+		attributeDescriptions[0].offset = offsetof(Vertex, pos);
+
+		attributeDescriptions[1].binding = 0;
+		attributeDescriptions[1].location = 1;
+		attributeDescriptions[1].format = VK_FORMAT_R32G32B32_SFLOAT;
+		attributeDescriptions[1].offset = offsetof(Vertex, color);
+
+		return attributeDescriptions;
+	}
+};
+
+const std::vector<Vertex> g_vertices =
+{
+	{ {  0.0f, -0.5f }, { 1.0f, 0.0f, 0.0f } },
+	{ {  0.5f,  0.5f }, { 0.0f, 1.0f, 0.0f } },
+	{ { -0.5f,  0.5f }, { 0.0f, 0.0f, 1.0f } }
+};
 
 static std::vector<char> readFile(const std::string& filename)
 {
@@ -299,6 +362,9 @@ private:
 
 		std::cout << "*** Creating Command Pool ..." << std::endl;
 		createCommandPool();
+
+		std::cout << "*** Creating Vertex Buffer ..." << std::endl;
+		createVertexBuffer();
 
 		std::cout << "*** Creating Command Buffers ..." << std::endl;
 		createCommandBuffers();
@@ -857,14 +923,19 @@ private:
 
 		VkPipelineShaderStageCreateInfo shaderStages[] = { vertShaderStageInfo, fragShaderStageInfo };
 
-		// *** TATO CAST DEFINUJE VSETKY FIXED FUNCTION PARAMETRE AKO NAPRIKLAD BLENDOVANIE, DEPTH-TESTING, VERTEX INPUT, ...
+		// *** TATO CAST DEFINUJE VERTEX INPUTS (attributes pre vertex shader)
+
+		VkVertexInputBindingDescription bindingDescription = Vertex::getBindingDescription();
+		std::array<VkVertexInputAttributeDescription, 2> attributeDescriptions = Vertex::getAttributeDescriptions();
 
 		VkPipelineVertexInputStateCreateInfo vertexInputInfo = { };
 		vertexInputInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
-		vertexInputInfo.vertexBindingDescriptionCount = 0;
-		vertexInputInfo.pVertexBindingDescriptions = nullptr; // Optional
-		vertexInputInfo.vertexAttributeDescriptionCount = 0;
-		vertexInputInfo.pVertexAttributeDescriptions = nullptr; // Optional
+		vertexInputInfo.vertexBindingDescriptionCount = 1;
+		vertexInputInfo.pVertexBindingDescriptions = &bindingDescription; // Optional
+		vertexInputInfo.vertexAttributeDescriptionCount = static_cast<uint32_t>(attributeDescriptions.size());
+		vertexInputInfo.pVertexAttributeDescriptions = attributeDescriptions.data(); // Optional
+
+		// *** TATO CAST DEFINUJE VSETKY FIXED FUNCTION PARAMETRE AKO NAPRIKLAD BLENDOVANIE, DEPTH-TESTING, VERTEX INPUT, ...
 
 		VkPipelineInputAssemblyStateCreateInfo inputAssemblyInfo = { };
 		inputAssemblyInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
@@ -1113,6 +1184,66 @@ private:
 		}
 	}
 
+	uint32_t findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties)
+	{
+		VkPhysicalDeviceMemoryProperties memProperties;
+		vkGetPhysicalDeviceMemoryProperties(m_physicalDevice, &memProperties);
+
+		for (uint32_t i = 0; i < memProperties.memoryTypeCount; ++i)
+		{
+			if ((typeFilter & (1 << i)) && (memProperties.memoryTypes[i].propertyFlags & properties) == properties)
+			{
+				return i;
+			}
+		}
+
+		throw std::runtime_error("failed to find suitable memory type!");
+	}
+
+	void createVertexBuffer()
+	{
+		VkBufferCreateInfo bufferInfo = { };
+		bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+		bufferInfo.size = sizeof(g_vertices[0]) * g_vertices.size();
+		bufferInfo.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
+		bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+
+		VkResult res = vkCreateBuffer(m_device, &bufferInfo, nullptr, &m_vertexBuffer);
+		if (res != VK_SUCCESS)
+		{
+			throw std::runtime_error("Failed to create vertex buffer!");
+		}
+
+		// The VkMemoryRequirements struct has three fields :
+		//    size: The size of the required amount of memory in bytes, may differ from bufferInfo.size.
+		//    alignment : The offset in bytes where the buffer begins in the allocated region of memory, depends on bufferInfo.usage and bufferInfo.flags.
+		//    memoryTypeBits : Bit field of the memory types that are suitable for the buffer.
+		VkMemoryRequirements memRequirements;
+		vkGetBufferMemoryRequirements(m_device, m_vertexBuffer, &memRequirements);
+
+		VkMemoryAllocateInfo allocInfo = { };
+		allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+		allocInfo.allocationSize = memRequirements.size;
+		allocInfo.memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+
+		res = vkAllocateMemory(m_device, &allocInfo, nullptr, &m_vertexBufferMemory);
+		if (res != VK_SUCCESS)
+		{
+			throw std::runtime_error("Failed to allocate vertex buffer memory!");
+		}
+
+		// associate this memory with the buffer
+		// The fourth parameter is the offset within the region of memory.
+		// Since this memory is allocated specifically for this the vertex buffer, the offset is simply 0.
+		// If the offset is non-zero, then it is required to be divisible by memRequirements.alignment.
+		vkBindBufferMemory(m_device, m_vertexBuffer, m_vertexBufferMemory, 0);
+
+		void* data;
+		vkMapMemory(m_device, m_vertexBufferMemory, 0, bufferInfo.size, 0, &data);
+		memcpy(data, g_vertices.data(), (size_t)bufferInfo.size);
+		vkUnmapMemory(m_device, m_vertexBufferMemory);
+	}
+
 	void createCommandBuffers()
 	{
 		m_commandBuffers.resize(m_swapChainFramebuffers.size());
@@ -1172,7 +1303,12 @@ private:
 
 			vkCmdBindPipeline(m_commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, m_graphicsPipeline);
 
-			vkCmdDraw(m_commandBuffers[i], 3, 1, 0, 0);
+			// specify what should be bound to the binding [0-1] and used as inputs in the next draw call
+			VkBuffer vertexBuffers[] = { m_vertexBuffer };
+			VkDeviceSize offsets[] = { 0 };
+			vkCmdBindVertexBuffers(m_commandBuffers[i], 0, 1, vertexBuffers, offsets);
+
+			vkCmdDraw(m_commandBuffers[i], static_cast<uint32_t>(g_vertices.size()), 1, 0, 0);
 
 			vkCmdEndRenderPass(m_commandBuffers[i]);
 
@@ -1398,6 +1534,10 @@ private:
 
 		vkDestroyCommandPool(m_device, m_commandPool, nullptr);
 
+		vkDestroyBuffer(m_device, m_vertexBuffer, nullptr);
+		// Memory that is bound to a buffer object may be freed once the buffer is no longer used, so let's free it after the buffer has been destroyed.
+		vkFreeMemory(m_device, m_vertexBufferMemory, nullptr);
+
 		// We should delete the framebuffers before the image views and render pass that they are based on, but only after we've finished rendering
 		for (VkFramebuffer framebuffer : m_swapChainFramebuffers)
 		{
@@ -1566,6 +1706,11 @@ private:
 	// Although many drivers and platforms trigger VK_ERROR_OUT_OF_DATE_KHR automatically after a window resize,
 	// it is not guaranteed to happen, hence this flag ...
 	bool m_framebufferResized = false;
+
+	// buffer for the vertices
+	VkBuffer m_vertexBuffer;
+	// memory for the vertex buffer
+	VkDeviceMemory m_vertexBufferMemory;
 };
 
 
