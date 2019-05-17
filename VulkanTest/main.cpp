@@ -1,7 +1,11 @@
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
-#include <glm/glm.hpp>
 
+#define GLM_FORCE_RADIANS
+#include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
+
+#include <chrono>
 #include <iostream>
 #include <stdexcept>
 #include <functional>
@@ -80,6 +84,13 @@ const std::vector<Vertex> g_vertices =
 const std::vector<uint16_t> g_indices =
 {
 	0, 1, 2, 2, 3, 0
+};
+
+struct UniformBufferObject
+{
+	glm::mat4 model;
+	glm::mat4 view;
+	glm::mat4 proj;
 };
 
 static std::vector<char> readFile(const std::string& filename)
@@ -360,6 +371,9 @@ private:
 		std::cout << "*** Creating VULKAN render pass ..." << std::endl;
 		createRenderPass();
 
+		std::cout << "*** Creating VULKAN descriptor set layout ..." << std::endl;
+		createDescriptorSetLayout();
+
 		std::cout << "*** Creating VULKAN graphics pipeline ..." << std::endl;
 		createGraphicsPipeline();
 
@@ -374,6 +388,15 @@ private:
 
 		std::cout << "*** Creating Index Buffer ..." << std::endl;
 		createIndexBuffer();
+
+		std::cout << "*** Creating Uniforms buffers ..." << std::endl;
+		createUniformBuffers();
+
+		std::cout << "*** Creating descriptor pool ..." << std::endl;
+		createDescriptorPool();
+
+		std::cout << "*** Creating descriptor sets ..." << std::endl;
+		createDescriptorSets();
 
 		std::cout << "*** Creating Command Buffers ..." << std::endl;
 		createCommandBuffers();
@@ -902,6 +925,35 @@ private:
 		}
 	}
 
+	void createDescriptorSetLayout()
+	{
+		VkDescriptorSetLayoutBinding uboLayoutBinding = { };
+		// koresponduje s layout(binding = 0), ktore mam v shaderi
+		uboLayoutBinding.binding = 0;
+		// typ deskriptora. Moze byt VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER pre uniformne premenne,
+		// alebo VK_DESCRIPTOR_TYPE_SAMPLER pre textury,
+		// alebo VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_NV pre raytracing akceleracnu strukturu ...
+		uboLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+		// It is possible for the shader variable to represent an array of uniform buffer objects
+		// and descriptorCount specifies the number of values in the array.
+		uboLayoutBinding.descriptorCount = 1;
+		// Specifies in which shader stages the descriptor is going to be referenced
+		uboLayoutBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+		// optional in this case, relevant for image sampling related descriptors
+		uboLayoutBinding.pImmutableSamplers = nullptr;
+
+		VkDescriptorSetLayoutCreateInfo layoutInfo = { };
+		layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+		layoutInfo.bindingCount = 1;
+		layoutInfo.pBindings = &uboLayoutBinding;
+
+		VkResult res = vkCreateDescriptorSetLayout(m_device, &layoutInfo, nullptr, &m_descriptorSetLayout);
+		if (res != VK_SUCCESS)
+		{
+			throw std::runtime_error("Failed to create descriptor set layout!");
+		}
+	}
+
 	void createGraphicsPipeline()
 	{
 		std::vector<char> vertShaderCode = readFile("shaders/vert.spv");
@@ -988,7 +1040,7 @@ private:
 		rasterizerStateInfo.lineWidth = 1.0f;
 
 		rasterizerStateInfo.cullMode = VK_CULL_MODE_BACK_BIT;
-		rasterizerStateInfo.frontFace = VK_FRONT_FACE_CLOCKWISE;
+		rasterizerStateInfo.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;// VK_FRONT_FACE_CLOCKWISE;
 
 		rasterizerStateInfo.depthBiasEnable = VK_FALSE;
 		rasterizerStateInfo.depthBiasConstantFactor = 0.0f; // Optional
@@ -1031,8 +1083,8 @@ private:
 		// pipeline layout definuje nastavenie uniform premennych
 		VkPipelineLayoutCreateInfo pipelineLayoutInfo = { };
 		pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-		pipelineLayoutInfo.setLayoutCount = 0; // Optional
-		pipelineLayoutInfo.pSetLayouts = nullptr; // Optional
+		pipelineLayoutInfo.setLayoutCount = 1;
+		pipelineLayoutInfo.pSetLayouts = &m_descriptorSetLayout;
 		pipelineLayoutInfo.pushConstantRangeCount = 0; // Optional
 		pipelineLayoutInfo.pPushConstantRanges = nullptr; // Optional
 
@@ -1294,14 +1346,24 @@ private:
 
 		VkBuffer stagingBuffer;
 		VkDeviceMemory stagingBufferMemory;
-		createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, stagingBuffer, stagingBufferMemory);
+		createBuffer(
+			bufferSize,
+			VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+			VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+			stagingBuffer,
+			stagingBufferMemory);
 
 		void* data;
 		vkMapMemory(m_device, stagingBufferMemory, 0, bufferSize, 0, &data);
 		memcpy(data, g_vertices.data(), (size_t)bufferSize);
 		vkUnmapMemory(m_device, stagingBufferMemory);
 
-		createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, m_vertexBuffer, m_vertexBufferMemory);
+		createBuffer(
+			bufferSize,
+			VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+			m_vertexBuffer,
+			m_vertexBufferMemory);
 
 		copyBuffer(stagingBuffer, m_vertexBuffer, bufferSize);
 
@@ -1315,19 +1377,118 @@ private:
 
 		VkBuffer stagingBuffer;
 		VkDeviceMemory stagingBufferMemory;
-		createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, stagingBuffer, stagingBufferMemory);
+		createBuffer(
+			bufferSize,
+			VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+			VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+			stagingBuffer,
+			stagingBufferMemory);
 
 		void* data;
 		vkMapMemory(m_device, stagingBufferMemory, 0, bufferSize, 0, &data);
 		memcpy(data, g_indices.data(), (size_t)bufferSize);
 		vkUnmapMemory(m_device, stagingBufferMemory);
 
-		createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, m_indexBuffer, m_indexBufferMemory);
+		createBuffer(
+			bufferSize,
+			VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
+			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+			m_indexBuffer,
+			m_indexBufferMemory);
 
 		copyBuffer(stagingBuffer, m_indexBuffer, bufferSize);
 
 		vkDestroyBuffer(m_device, stagingBuffer, nullptr);
 		vkFreeMemory(m_device, stagingBufferMemory, nullptr);
+	}
+
+	void createUniformBuffers()
+	{
+		VkDeviceSize bufferSize = sizeof(UniformBufferObject);
+
+		m_uniformBuffers.resize(m_swapChainImages.size());
+		m_uniformBuffersMemory.resize(m_swapChainImages.size());
+
+		for (size_t i = 0; i < m_swapChainImages.size(); ++i)
+		{
+			createBuffer(
+				bufferSize,
+				VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+				VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+				m_uniformBuffers[i],
+				m_uniformBuffersMemory[i]);
+		}
+	}
+
+	void createDescriptorPool()
+	{
+		VkDescriptorPoolSize poolSize = { };
+		poolSize.type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+		poolSize.descriptorCount = static_cast<uint32_t>(m_swapChainImages.size());
+
+		VkDescriptorPoolCreateInfo poolInfo = { };
+		poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+		poolInfo.poolSizeCount = 1;
+		poolInfo.pPoolSizes = &poolSize;
+		poolInfo.maxSets = static_cast<uint32_t>(m_swapChainImages.size());
+
+		VkResult res = vkCreateDescriptorPool(m_device, &poolInfo, nullptr, &m_descriptorPool);
+		if (res != VK_SUCCESS)
+		{
+			throw std::runtime_error("Failed to create descriptor pool!");
+		}
+	}
+
+	void createDescriptorSets()
+	{
+		m_descriptorSets.resize(m_swapChainImages.size());
+
+		std::vector<VkDescriptorSetLayout> layouts(m_swapChainImages.size(), m_descriptorSetLayout);
+
+		VkDescriptorSetAllocateInfo allocInfo = { };
+		allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+		allocInfo.descriptorPool = m_descriptorPool;
+		allocInfo.descriptorSetCount = static_cast<uint32_t>(layouts.size());
+		allocInfo.pSetLayouts = layouts.data();
+
+		VkResult res = vkAllocateDescriptorSets(m_device, &allocInfo, m_descriptorSets.data());
+		if (res != VK_SUCCESS)
+		{
+			throw std::runtime_error("Failed to allocate descriptor sets!");
+		}
+
+		for (size_t i = 0; i < m_descriptorSets.size(); ++i)
+		{
+			VkDescriptorBufferInfo bufferInfo = { };
+			bufferInfo.buffer = m_uniformBuffers[i];
+			bufferInfo.offset = 0;
+			bufferInfo.range = sizeof(UniformBufferObject);
+
+			VkWriteDescriptorSet descriptorWrite = { };
+			descriptorWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+			descriptorWrite.dstSet = m_descriptorSets[i];
+			// our uniform buffer has binding index 0 in the vertex shader
+			descriptorWrite.dstBinding = 0;
+			// Descriptors can be arrays, so we also need to specify the first index in the array that we want to update.
+			// In this particular case we're not using an array, so the index is simply 0.
+			descriptorWrite.dstArrayElement = 0;
+			// It's possible to update multiple descriptors at once in an array, starting at index dstArrayElement.
+			// The descriptorCount field specifies how many array elements one wants to update.
+			descriptorWrite.descriptorCount = 1;
+			// We need to specify the type of descriptor again.
+			descriptorWrite.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+			// references an array with descriptorCount structs that actually configure the descriptors.
+			// It depends on the type of descriptor which one of the three one actually needs to use.
+			//    pBufferInfo field is used for descriptors that refer to buffer data
+			//    pImageInfo is used for descriptors that refer to image data
+			//    pTexelBufferView is used for descriptors that refer to buffer views
+			descriptorWrite.pBufferInfo = &bufferInfo;
+			descriptorWrite.pImageInfo = nullptr; // Optional
+			descriptorWrite.pTexelBufferView = nullptr; // Optional
+
+			// The last two parameters refer to an array of VkCopyDescriptorSet. They can be used to copy descriptors to each other.
+			vkUpdateDescriptorSets(m_device, 1, &descriptorWrite, 0, nullptr);
+		}
 	}
 
 	void createCommandBuffers()
@@ -1396,6 +1557,8 @@ private:
 
 			vkCmdBindIndexBuffer(m_commandBuffers[i], m_indexBuffer, 0, VK_INDEX_TYPE_UINT16);
 
+			vkCmdBindDescriptorSets(m_commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipelineLayout, 0, 1, &m_descriptorSets[i], 0, nullptr);
+
 			vkCmdDrawIndexed(m_commandBuffers[i], static_cast<uint32_t>(g_indices.size()), 1, 0, 0, 0);
 
 			vkCmdEndRenderPass(m_commandBuffers[i]);
@@ -1451,6 +1614,16 @@ private:
 
 	void cleanupSwapChain()
 	{
+		vkDestroyDescriptorPool(m_device, m_descriptorPool, nullptr);
+
+		// Since the number of uniform buffers also depends on the number of swap chain images,
+		// which could change after a recreation, we'll clean it up in cleanupSwapChain.
+		for (size_t i = 0; i < m_swapChainImages.size(); ++i)
+		{
+			vkDestroyBuffer(m_device, m_uniformBuffers[i], nullptr);
+			vkFreeMemory(m_device, m_uniformBuffersMemory[i], nullptr);
+		}
+
 		vkFreeCommandBuffers(m_device, m_commandPool, static_cast<uint32_t>(m_commandBuffers.size()), m_commandBuffers.data());
 
 		for (VkFramebuffer framebuffer : m_swapChainFramebuffers)
@@ -1495,6 +1668,9 @@ private:
 		createRenderPass();
 		createGraphicsPipeline();
 		createFramebuffers();
+		createUniformBuffers();
+		createDescriptorPool();
+		createDescriptorSets();
 		createCommandBuffers();
 
 		std::cout << "=== Swapchain cleanup - END ================================================================" << std::endl;
@@ -1545,8 +1721,10 @@ private:
 			throw std::runtime_error("Failed to acquire swap chain image!");
 		}
 
+		updateUniformBuffer(imageIndex);
+
 		// unlike the semaphores, we manually need to restore the fence to the unsignaled state by resetting it
-		// this needs to happen only after we early bail out of unsuccessfull swapchain recreation. Oterwise the fence would
+		// this needs to happen only after we early bail out of unsuccessfull swapchain recreation. Otherwise the fence would
 		// never come to a signalled state (we would never reach the following vkQueueSubmit) and thus the app would deadlock.
 		vkResetFences(m_device, 1, &m_inFlightFences[m_currentFrame]);
 
@@ -1607,6 +1785,26 @@ private:
 		m_currentFrame = (m_currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
 	}
 
+	void updateUniformBuffer(const uint32_t currentImage)
+	{
+		static auto startTime = std::chrono::high_resolution_clock::now();
+
+		auto currentTime = std::chrono::high_resolution_clock::now();
+		float time = std::chrono::duration<float, std::chrono::seconds::period>(currentTime - startTime).count();
+
+		UniformBufferObject ubo = { };
+		ubo.model = glm::rotate(glm::mat4(1.0f), time * glm::radians(90.0f), glm::vec3(0.0f, 0.0f, 1.0f));
+		ubo.view = glm::lookAt(glm::vec3(2.0f, 2.0f, 2.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f));
+		ubo.proj = glm::perspective(glm::radians(45.0f), (float) m_swapChainExtent.width / (float) m_swapChainExtent.height, 0.1f, 10.0f);
+		ubo.proj[1][1] *= -1;
+
+		void *data = nullptr;
+		//vkMapMemory(m_device, m_uniformBuffersMemory[currentImage], 0, VK_WHOLE_SIZE, 0, &data);
+		vkMapMemory(m_device, m_uniformBuffersMemory[currentImage], 0, sizeof(ubo), 0, &data);
+		std::memcpy(data, &ubo, sizeof(ubo));
+		vkUnmapMemory(m_device, m_uniformBuffersMemory[currentImage]);
+	}
+
 	// ///////////////////////////////////////////////////////////////////////////////////////////////
 	// VULKAN cleanup
 	// ///////////////////////////////////////////////////////////////////////////////////////////////
@@ -1621,6 +1819,14 @@ private:
 		}
 
 		vkDestroyCommandPool(m_device, m_commandPool, nullptr);
+
+		vkDestroyDescriptorPool(m_device, m_descriptorPool, nullptr);
+
+		for (size_t i = 0; i < m_swapChainImages.size(); ++i)
+		{
+			vkDestroyBuffer(m_device, m_uniformBuffers[i], nullptr);
+			vkFreeMemory(m_device, m_uniformBuffersMemory[i], nullptr);
+		}
 
 		vkDestroyBuffer(m_device, m_indexBuffer, nullptr);
 		vkFreeMemory(m_device, m_indexBufferMemory, nullptr);
@@ -1638,6 +1844,8 @@ private:
 		vkDestroyPipeline(m_device, m_graphicsPipeline, nullptr);
 
 		vkDestroyPipelineLayout(m_device, m_pipelineLayout, nullptr);
+
+		vkDestroyDescriptorSetLayout(m_device, m_descriptorSetLayout, nullptr);
 
 		vkDestroyRenderPass(m_device, m_renderPass, nullptr);
 
@@ -1766,6 +1974,15 @@ private:
 	// graficka pipeline, cize vsetok state + shadre + vsetko dalsie, co budem potrebovat pri jednom konkretnom render passe
 	VkPipeline m_graphicsPipeline = VK_NULL_HANDLE;
 
+	// definuje mi ake resources budu moje shadery pouzivat (kolko blokov uniformnych premennych,
+	// v akych shader stages su tieto bloky definovane, ake samplery, akceleracne struktury, ...)
+	VkDescriptorSetLayout m_descriptorSetLayout = VK_NULL_HANDLE;
+
+	VkDescriptorPool m_descriptorPool = VK_NULL_HANDLE;
+
+	// Descriptor sets don't need to be explicitly clean up, because they will be automatically freed when the descriptor pool is destroyed.
+	std::vector<VkDescriptorSet> m_descriptorSets;
+
 	// udrzuje v sebe hodnoty pre jednotlive uniforms, ktore v shaderi mam
 	VkPipelineLayout m_pipelineLayout = VK_NULL_HANDLE;
 
@@ -1799,14 +2016,20 @@ private:
 	bool m_framebufferResized = false;
 
 	// buffer for the vertices
-	VkBuffer m_vertexBuffer;
+	VkBuffer m_vertexBuffer = VK_NULL_HANDLE;
 	// memory for the vertex buffer
-	VkDeviceMemory m_vertexBufferMemory;
+	VkDeviceMemory m_vertexBufferMemory = VK_NULL_HANDLE;
 
 	// a buffer to hold indices of the mesh
-	VkBuffer m_indexBuffer;
+	VkBuffer m_indexBuffer = VK_NULL_HANDLE;
 	// the actual memory allocated for the indices
-	VkDeviceMemory m_indexBufferMemory;
+	VkDeviceMemory m_indexBufferMemory = VK_NULL_HANDLE;
+
+	// buffers for storing uniforms for the shaders
+	// We have an array of them because multiple frames may be in flight at the same time and
+	// we don't want to update the buffer in preparation of the next frame while a previous one is still reading from it
+	std::vector<VkBuffer> m_uniformBuffers;
+	std::vector<VkDeviceMemory> m_uniformBuffersMemory;
 };
 
 
