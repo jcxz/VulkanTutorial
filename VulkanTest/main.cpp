@@ -5,6 +5,9 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 
+#define STB_IMAGE_IMPLEMENTATION
+#include <stb_image.h>
+
 #include <chrono>
 #include <iostream>
 #include <stdexcept>
@@ -382,6 +385,9 @@ private:
 
 		std::cout << "*** Creating Command Pool ..." << std::endl;
 		createCommandPool();
+
+		std::cout << "*** Creating Texture ..." << std::endl;
+		createTextureImage();
 
 		std::cout << "*** Creating Vertex Buffer ..." << std::endl;
 		createVertexBuffer();
@@ -1245,6 +1251,117 @@ private:
 		}
 	}
 
+	VkCommandBuffer beginSingleTimeCommands()
+	{
+		VkCommandBufferAllocateInfo allocInfo = { };
+		allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+		allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+		allocInfo.commandPool = m_commandPool;
+		allocInfo.commandBufferCount = 1;
+
+		VkCommandBuffer commandBuffer;
+		vkAllocateCommandBuffers(m_device, &allocInfo, &commandBuffer);
+
+		VkCommandBufferBeginInfo beginInfo = { };
+		beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+		beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+
+		vkBeginCommandBuffer(commandBuffer, &beginInfo);
+
+		return commandBuffer;
+	}
+
+	void endSingleTimeCommands(VkCommandBuffer commandBuffer)
+	{
+		vkEndCommandBuffer(commandBuffer);
+
+		VkSubmitInfo submitInfo = { };
+		submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+		submitInfo.commandBufferCount = 1;
+		submitInfo.pCommandBuffers = &commandBuffer;
+
+		vkQueueSubmit(m_graphicsQueue, 1, &submitInfo, VK_NULL_HANDLE);
+		vkQueueWaitIdle(m_graphicsQueue);
+
+		vkFreeCommandBuffers(m_device, m_commandPool, 1, &commandBuffer);
+	}
+
+	void transitionImageLayout(VkImage image, VkFormat format, VkImageLayout oldLayout, VkImageLayout newLayout)
+	{
+		VkCommandBuffer commandBuffer = beginSingleTimeCommands();
+
+		VkImageMemoryBarrier barrier = { };
+		barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+		// It is possible to use VK_IMAGE_LAYOUT_UNDEFINED as oldLayout if you don't care about the existing contents of the image.
+		barrier.oldLayout = oldLayout;
+		barrier.newLayout = newLayout;
+		// If you are using the barrier to transfer queue family ownership, then these two fields should be the indices of the queue families.
+		// They must be set to VK_QUEUE_FAMILY_IGNORED if you don't want to do this (not the default value!).
+		barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+		barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+		// The image and subresourceRange specify the image that is affected and the specific part of the image.
+		barrier.image = image;
+		barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+		barrier.subresourceRange.baseMipLevel = 0;
+		barrier.subresourceRange.levelCount = 1;
+		barrier.subresourceRange.baseArrayLayer = 0;
+		barrier.subresourceRange.layerCount = 1;
+
+		// Barriers are primarily used for synchronization purposes, so you must specify which types of operations
+		// that involve the resource must happen before the barrier, and which operations that involve the resource must wait on the barrier.
+		//
+		// All types of pipeline barriers are submitted using the same function.
+		// The first parameter after the command buffer specifies in which pipeline stage the operations occur that should happen before the barrier.
+		// The second parameter specifies the pipeline stage in which operations will wait on the barrier.
+		// The pipeline stages that you are allowed to specify before and after the barrier depend on how you use the resource before and after the barrier.
+		// he allowed values are listed in this table of the specification : https://www.khronos.org/registry/vulkan/specs/1.0/html/vkspec.html#synchronization-access-types-supported
+		VkPipelineStageFlags srcStageMask = 0;
+		VkPipelineStageFlags dstStageMask = 0;
+
+		if (oldLayout == VK_IMAGE_LAYOUT_UNDEFINED && newLayout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL)
+		{
+			// pri tejto zmene layout nemusi transfer operacia cakat na nijaku predoslu operaciu
+			barrier.srcAccessMask = 0;
+			barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+
+			srcStageMask = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+			dstStageMask = VK_PIPELINE_STAGE_TRANSFER_BIT;
+		}
+		else if (oldLayout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL && newLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
+		{
+			// pri tejto zmene layoutu musi pockat citanie z textury v shaderi na dokoncenie transfer operacie
+			barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+			barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+
+			srcStageMask = VK_PIPELINE_STAGE_TRANSFER_BIT;
+			dstStageMask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+		}
+		else
+		{
+			throw std::invalid_argument("Unsupported layout transition!");
+		}
+
+		// The pipeline stages that you are allowed to specify before and after the barrier depend on how you use the resource before and after the barrier.
+		// For example, if you're going to read from a uniform after the barrier, you would specify a usage of VK_ACCESS_UNIFORM_READ_BIT and
+		// the earliest shader that will read from the uniform as pipeline stage, for example VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT.
+		// It would not make sense to specify a non-shader pipeline stage for this type of usage and the validation layers will warn you when you specify
+		// a pipeline stage that does not match the type of usage.
+		vkCmdPipelineBarrier(
+			commandBuffer,
+			// specifies in which pipeline stage the operations occur that should happen before the barrier.
+			srcStageMask,
+			// specifies the pipeline stage in which operations will wait on the barrier.
+			dstStageMask,
+			// either 0 or VK_DEPENDENCY_BY_REGION_BIT. The latter turns the barrier into a per-region condition.
+			// That means that the implementation is allowed to already begin reading from the parts of a resource that were written so far, for example.
+			0,
+			0, nullptr,
+			0, nullptr,
+			1, &barrier);
+
+		endSingleTimeCommands(commandBuffer);
+	}
+
 	uint32_t findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties)
 	{
 		VkPhysicalDeviceMemoryProperties memProperties;
@@ -1306,20 +1423,7 @@ private:
 
 	void copyBuffer(VkBuffer srcBuffer, VkBuffer dstBuffer, VkDeviceSize size)
 	{
-		VkCommandBufferAllocateInfo allocInfo = { };
-		allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-		allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-		allocInfo.commandPool = m_commandPool;
-		allocInfo.commandBufferCount = 1;
-
-		VkCommandBuffer commandBuffer;
-		vkAllocateCommandBuffers(m_device, &allocInfo, &commandBuffer);
-
-		VkCommandBufferBeginInfo beginInfo = { };
-		beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-		beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-
-		vkBeginCommandBuffer(commandBuffer, &beginInfo);
+		VkCommandBuffer commandBuffer = beginSingleTimeCommands();
 
 		VkBufferCopy copyRegion = { };
 		copyRegion.srcOffset = 0; // Optional
@@ -1327,17 +1431,147 @@ private:
 		copyRegion.size = size;
 		vkCmdCopyBuffer(commandBuffer, srcBuffer, dstBuffer, 1, &copyRegion);
 
-		vkEndCommandBuffer(commandBuffer);
+		endSingleTimeCommands(commandBuffer);
+	}
 
-		VkSubmitInfo submitInfo = { };
-		submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-		submitInfo.commandBufferCount = 1;
-		submitInfo.pCommandBuffers = &commandBuffer;
+	void createImage(uint32_t width, uint32_t height, VkFormat format, VkImageTiling tiling, VkImageUsageFlags usage, VkMemoryPropertyFlags properties, VkImage& image, VkDeviceMemory& imageMemory)
+	{
+		VkImageCreateInfo imageInfo = { };
+		imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+		// There are some optional flags for images that are related to sparse images.
+		// Sparse images are images where only certain regions are actually backed by memory.
+		// If you were using a 3D texture for a voxel terrain, for example, then you could use this to avoid allocating memory to store large volumes of "air" values.
+		imageInfo.flags = 0;
+		imageInfo.imageType = VK_IMAGE_TYPE_2D;
+		//  we should use the same format for the texels as the pixels in the buffer, otherwise the copy operation will fail
+		imageInfo.format = format;
+		imageInfo.extent.width = width;
+		imageInfo.extent.height = height;
+		imageInfo.extent.depth = 1;
+		imageInfo.mipLevels = 1;
+		imageInfo.arrayLayers = 1;
+		// The samples flag is related to multisampling. This is only relevant for images that will be used as attachments, so stick to one sample.
+		imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
+		// VK_IMAGE_TILING_LINEAR: Texels are laid out in row - major order like our pixels array
+		// VK_IMAGE_TILING_OPTIMAL : Texels are laid out in an implementation defined order for optimal access
+		// Unlike the layout of an image, the tiling mode cannot be changed at a later time.
+		// If you want to be able to directly access texels in the memory of the image, then you must use VK_IMAGE_TILING_LINEAR.
+		// We are using a staging buffer instead of a staging image, so this won't be necessary.
+		// We are using VK_IMAGE_TILING_OPTIMAL for efficient access from the shader.
+		imageInfo.tiling = tiling;
+		// VK_IMAGE_USAGE_SAMPLED_BIT is to be able to access the image from the shader
+		imageInfo.usage = usage;
+		// The image will only be used by one queue family: the one that supports graphics (and therefore also) transfer operations.
+		imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+		// There are only two possible values for the initialLayout of an image:
+		//    VK_IMAGE_LAYOUT_UNDEFINED: Not usable by the GPU and the very first transition will discard the texels.
+		//    VK_IMAGE_LAYOUT_PREINITIALIZED : Not usable by the GPU, but the first transition will preserve the texels.
+		// There are few situations where it is necessary for the texels to be preserved during the first transition.
+		// One example, however, would be if you wanted to use an image as a staging image in combination with the VK_IMAGE_TILING_LINEAR layout.
+		// In that case, you'd want to upload the texel data to it and then transition the image to be a transfer source without losing the data.
+		// In our case, however, we're first going to transition the image to be a transfer destination and then copy texel data to it from a buffer object,
+		// so we don't need this property and can safely use VK_IMAGE_LAYOUT_UNDEFINED.
+		imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
 
-		vkQueueSubmit(m_graphicsQueue, 1, &submitInfo, VK_NULL_HANDLE);
-		vkQueueWaitIdle(m_graphicsQueue);
+		VkResult res = vkCreateImage(m_device, &imageInfo, nullptr, &image);
+		if (res != VK_SUCCESS)
+		{
+			throw std::runtime_error("Failed to create image!");
+		}
 
-		vkFreeCommandBuffers(m_device, m_commandPool, 1, &commandBuffer);
+		VkMemoryRequirements memRequirements;
+		vkGetImageMemoryRequirements(m_device, image, &memRequirements);
+
+		VkMemoryAllocateInfo allocInfo = { };
+		allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+		allocInfo.allocationSize = memRequirements.size;
+		allocInfo.memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits, properties);
+
+		res = vkAllocateMemory(m_device, &allocInfo, nullptr, &imageMemory);
+		if (res != VK_SUCCESS)
+		{
+			throw std::runtime_error("Failed to allocate image memory!");
+		}
+
+		vkBindImageMemory(m_device, image, imageMemory, 0);
+	}
+
+	void copyBufferToImage(VkBuffer buffer, VkImage image, uint32_t width, uint32_t height)
+	{
+		VkCommandBuffer commandBuffer = beginSingleTimeCommands();
+
+		VkBufferImageCopy region = { };
+		// specifies the byte offset in the buffer at which the pixel values start
+		region.bufferOffset = 0;
+		// The bufferRowLength and bufferImageHeight fields specify how the pixels are laid out in memory.
+		// For example, you could have some padding bytes between rows of the image.
+		// Specifying 0 for both indicates that the pixels are simply tightly packed like they are in our case.
+		region.bufferRowLength = 0;
+		region.bufferImageHeight = 0;
+		// The imageSubresource, imageOffset and imageExtent fields indicate to which part of the image we want to copy the pixels.
+		region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+		region.imageSubresource.mipLevel = 0;
+		region.imageSubresource.baseArrayLayer = 0;
+		region.imageSubresource.layerCount = 1;
+		region.imageOffset.x = 0;
+		region.imageOffset.y = 0;
+		region.imageOffset.z = 0;
+		region.imageExtent.width = width;
+		region.imageExtent.height = height;
+		region.imageExtent.depth = 1;
+
+		// The fourth parameter indicates which layout the image is currently using.
+		// We are assuming here that the image has already been transitioned to the layout that is optimal for copying pixels to.
+		vkCmdCopyBufferToImage(commandBuffer, buffer, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+
+		endSingleTimeCommands(commandBuffer);
+	}
+
+	void createTextureImage()
+	{
+		int texWidth, texHeight, texChannels;
+		stbi_uc* pixels = stbi_load("textures/texture.jpg", &texWidth, &texHeight, &texChannels, STBI_rgb_alpha);
+		if (pixels == nullptr)
+		{
+			throw std::runtime_error("failed to load texture image!");
+		}
+
+		VkDeviceSize imageSize = texWidth * texHeight * 4;
+
+		VkBuffer stagingBuffer;
+		VkDeviceMemory stagingBufferMemory;
+
+		createBuffer(
+			imageSize,
+			VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+			VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+			stagingBuffer,
+			stagingBufferMemory);
+
+		void* data;
+		vkMapMemory(m_device, stagingBufferMemory, 0, VK_WHOLE_SIZE, 0, &data);
+		std::memcpy(data, pixels, static_cast<size_t>(imageSize));
+		vkUnmapMemory(m_device, stagingBufferMemory);
+
+		stbi_image_free(pixels);
+
+		createImage(
+			texWidth,
+			texHeight,
+			VK_FORMAT_R8G8B8A8_UNORM,
+			VK_IMAGE_TILING_OPTIMAL,
+			VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+			m_textureImage,
+			m_textureImageMemory);
+
+		transitionImageLayout(m_textureImage, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+		copyBufferToImage(stagingBuffer, m_textureImage, texWidth, texHeight);
+		// To be able to start sampling from the texture image in the shader, we need to prepare it for shader access
+		transitionImageLayout(m_textureImage, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+
+		vkDestroyBuffer(m_device, stagingBuffer, nullptr);
+		vkFreeMemory(m_device, stagingBufferMemory, nullptr);
 	}
 
 	void createVertexBuffer()
@@ -1835,6 +2069,9 @@ private:
 		// Memory that is bound to a buffer object may be freed once the buffer is no longer used, so let's free it after the buffer has been destroyed.
 		vkFreeMemory(m_device, m_vertexBufferMemory, nullptr);
 
+		vkDestroyImage(m_device, m_textureImage, nullptr);
+		vkFreeMemory(m_device, m_textureImageMemory, nullptr);
+
 		// We should delete the framebuffers before the image views and render pass that they are based on, but only after we've finished rendering
 		for (VkFramebuffer framebuffer : m_swapChainFramebuffers)
 		{
@@ -2030,6 +2267,10 @@ private:
 	// we don't want to update the buffer in preparation of the next frame while a previous one is still reading from it
 	std::vector<VkBuffer> m_uniformBuffers;
 	std::vector<VkDeviceMemory> m_uniformBuffersMemory;
+
+	// texture and its associated memory
+	VkImage m_textureImage = VK_NULL_HANDLE;
+	VkDeviceMemory m_textureImageMemory = VK_NULL_HANDLE;
 };
 
 
