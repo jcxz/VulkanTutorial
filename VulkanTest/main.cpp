@@ -814,12 +814,27 @@ private:
 
 	VkExtent2D chooseSwapExtent(const VkSurfaceCapabilitiesKHR& capabilities)
 	{
+		// The swap extent is the resolution of the swap chain images and it's almost always exactly equal
+		// to the resolution of the window that we're drawing to. The range of the possible resolutions is
+		// defined in the VkSurfaceCapabilitiesKHR structure. Vulkan tells us to match the resolution
+		// of the window by setting the width and height in the currentExtent member.
+		// However, some window managers do allow us to differ here and this is indicated by setting the width
+		// and height in currentExtent to a special value: the maximum value of uint32_t.
+		// In that case we'll pick the resolution that best matches the window within the minImageExtent and
+		// maxImageExtent bounds.
 		if (capabilities.currentExtent.width != std::numeric_limits<uint32_t>::max())
 		{
+			//std::cerr << "<<<<<<< currentExtent is : WxH=[" << capabilities.currentExtent.width << ", " << capabilities.currentExtent.height << "]" << std::endl;
 			return capabilities.currentExtent;
 		}
 		else
 		{
+			//std::cerr << "******* currentExtent is determined by swapchain, width limits = ["
+			//	<< capabilities.minImageExtent.width << ", " << capabilities.maxImageExtent.width
+			//	<< "], height limits = ["
+			//	<< capabilities.minImageExtent.height << ", " << capabilities.maxImageExtent.height
+			//	<< "]" << std::endl;
+
 			int width, height;
 			glfwGetFramebufferSize(m_window, &width, &height);
 
@@ -2073,6 +2088,7 @@ private:
 
 	void cleanupSwapChain()
 	{
+		// The descriptor pool should be destroyed when the swap chain is recreated because it depends on the number of swapchain images.
 		vkDestroyDescriptorPool(m_device, m_descriptorPool, nullptr);
 
 		// Since the number of uniform buffers also depends on the number of swap chain images,
