@@ -1479,51 +1479,6 @@ private:
 		throw std::runtime_error("failed to find suitable memory type!");
 	}
 
-#if 0
-	void createBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties, VkBuffer& buffer, VkDeviceMemory& bufferMemory)
-	{
-		VkBufferCreateInfo bufferInfo = { };
-		bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-		bufferInfo.size = size;
-		bufferInfo.usage = usage;
-		bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-
-		VkResult res = vkCreateBuffer(m_device, &bufferInfo, nullptr, &buffer);
-		if (res != VK_SUCCESS)
-		{
-			throw std::runtime_error("Failed to create buffer!");
-		}
-
-		// The VkMemoryRequirements struct has three fields :
-		//    size: The size of the required amount of memory in bytes, may differ from bufferInfo.size.
-		//    alignment : The offset in bytes where the buffer begins in the allocated region of memory, depends on bufferInfo.usage and bufferInfo.flags.
-		//    memoryTypeBits : Bit field of the memory types that are suitable for the buffer.
-		VkMemoryRequirements memRequirements;
-		vkGetBufferMemoryRequirements(m_device, buffer, &memRequirements);
-
-		VkMemoryAllocateInfo allocInfo = { };
-		allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-		allocInfo.allocationSize = memRequirements.size;
-		// GPU moze citat aj z pamate, ktora je HOST_VISIBLE, ale ide to cez PCI-E ... takze je to brutal pomale
-		// pripadne podla niektorych zdrojov su data nacitane z tejto pamate cacheovane na GPU (L2 cache ???),
-		// takze pre nejake male data by to nemal byt az taky velky problem. Tie sa raz nacitaju a nacacheuju
-		// a potom sa uz na GPU citaju relativne rychlo, ale tento typ pamate rozhodne nie je idealny na velke kusy dat ...
-		allocInfo.memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits, properties);
-
-		res = vkAllocateMemory(m_device, &allocInfo, nullptr, &bufferMemory);
-		if (res != VK_SUCCESS)
-		{
-			throw std::runtime_error("Failed to allocate vertex buffer memory!");
-		}
-
-		// associate this memory with the buffer
-		// The fourth parameter is the offset within the region of memory.
-		// Since this memory is allocated specifically for this the vertex buffer, the offset is simply 0.
-		// If the offset is non-zero, then it is required to be divisible by memRequirements.alignment.
-		vkBindBufferMemory(m_device, buffer, bufferMemory, 0);
-	}
-#endif
-
 	void createBuffer(VkDeviceSize size, VkBufferUsageFlags bufUsage, VmaMemoryUsage memUsage, VkBuffer& buffer, VmaAllocation& allocation)
 	{
 		VkBufferCreateInfo bufferInfo = { };
@@ -1555,69 +1510,6 @@ private:
 		endSingleTimeCommands(commandBuffer);
 	}
 
-#if 0
-	void createImage(uint32_t width, uint32_t height, VkFormat format, VkImageTiling tiling, VkImageUsageFlags usage, VkMemoryPropertyFlags properties, VkImage& image, VkDeviceMemory& imageMemory)
-	{
-		VkImageCreateInfo imageInfo = { };
-		imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
-		// There are some optional flags for images that are related to sparse images.
-		// Sparse images are images where only certain regions are actually backed by memory.
-		// If you were using a 3D texture for a voxel terrain, for example, then you could use this to avoid allocating memory to store large volumes of "air" values.
-		imageInfo.flags = 0;
-		imageInfo.imageType = VK_IMAGE_TYPE_2D;
-		//  we should use the same format for the texels as the pixels in the buffer, otherwise the copy operation will fail
-		imageInfo.format = format;
-		imageInfo.extent.width = width;
-		imageInfo.extent.height = height;
-		imageInfo.extent.depth = 1;
-		imageInfo.mipLevels = 1;
-		imageInfo.arrayLayers = 1;
-		// The samples flag is related to multisampling. This is only relevant for images that will be used as attachments, so stick to one sample.
-		imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
-		// VK_IMAGE_TILING_LINEAR: Texels are laid out in row - major order like our pixels array
-		// VK_IMAGE_TILING_OPTIMAL : Texels are laid out in an implementation defined order for optimal access
-		// Unlike the layout of an image, the tiling mode cannot be changed at a later time.
-		// If you want to be able to directly access texels in the memory of the image, then you must use VK_IMAGE_TILING_LINEAR.
-		// We are using a staging buffer instead of a staging image, so this won't be necessary.
-		// We are using VK_IMAGE_TILING_OPTIMAL for efficient access from the shader.
-		imageInfo.tiling = tiling;
-		// VK_IMAGE_USAGE_SAMPLED_BIT is to be able to access the image from the shader
-		imageInfo.usage = usage;
-		// The image will only be used by one queue family: the one that supports graphics (and therefore also) transfer operations.
-		imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-		// There are only two possible values for the initialLayout of an image:
-		//    VK_IMAGE_LAYOUT_UNDEFINED: Not usable by the GPU and the very first transition will discard the texels.
-		//    VK_IMAGE_LAYOUT_PREINITIALIZED : Not usable by the GPU, but the first transition will preserve the texels.
-		// There are few situations where it is necessary for the texels to be preserved during the first transition.
-		// One example, however, would be if you wanted to use an image as a staging image in combination with the VK_IMAGE_TILING_LINEAR layout.
-		// In that case, you'd want to upload the texel data to it and then transition the image to be a transfer source without losing the data.
-		// In our case, however, we're first going to transition the image to be a transfer destination and then copy texel data to it from a buffer object,
-		// so we don't need this property and can safely use VK_IMAGE_LAYOUT_UNDEFINED.
-		imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-
-		VkResult res = vkCreateImage(m_device, &imageInfo, nullptr, &image);
-		if (res != VK_SUCCESS)
-		{
-			throw std::runtime_error("Failed to create image!");
-		}
-
-		VkMemoryRequirements memRequirements;
-		vkGetImageMemoryRequirements(m_device, image, &memRequirements);
-
-		VkMemoryAllocateInfo allocInfo = { };
-		allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-		allocInfo.allocationSize = memRequirements.size;
-		allocInfo.memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits, properties);
-
-		res = vkAllocateMemory(m_device, &allocInfo, nullptr, &imageMemory);
-		if (res != VK_SUCCESS)
-		{
-			throw std::runtime_error("Failed to allocate image memory!");
-		}
-
-		vkBindImageMemory(m_device, image, imageMemory, 0);
-	}
-#endif
 	void createImage(uint32_t width, uint32_t height, VkFormat format, VkImageTiling tiling, VkImageUsageFlags imgUsage, VmaMemoryUsage memUsage, VkImage& image, VmaAllocation& imageMemory)
 	{
 		VkImageCreateInfo imageInfo = { };
@@ -1745,7 +1637,6 @@ private:
 			depthFormat,
 			VK_IMAGE_TILING_OPTIMAL,
 			VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
-			//VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
 			VMA_MEMORY_USAGE_GPU_ONLY,
 			m_depthImage,
 			m_depthImageMemory);
@@ -1768,20 +1659,6 @@ private:
 		VkDeviceSize imageSize = texWidth * texHeight * 4;
 
 		VkBuffer stagingBuffer;
-		//VkDeviceMemory stagingBufferMemory;
-
-		//createBuffer(
-		//	imageSize,
-		//	VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-		//	VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-		//	stagingBuffer,
-		//	stagingBufferMemory);
-
-		//void* data;
-		//vkMapMemory(m_device, stagingBufferMemory, 0, VK_WHOLE_SIZE, 0, &data);
-		//std::memcpy(data, pixels, static_cast<size_t>(imageSize));
-		//vkUnmapMemory(m_device, stagingBufferMemory);
-
 		VmaAllocation stagingBufferMemory;
 
 		createBuffer(
@@ -1804,7 +1681,6 @@ private:
 			VK_FORMAT_R8G8B8A8_UNORM,
 			VK_IMAGE_TILING_OPTIMAL,
 			VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
-			//VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
 			VMA_MEMORY_USAGE_GPU_ONLY,
 			m_textureImage,
 			m_textureImageMemory);
@@ -1814,8 +1690,6 @@ private:
 		// To be able to start sampling from the texture image in the shader, we need to prepare it for shader access
 		transitionImageLayout(m_textureImage, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 
-		//vkDestroyBuffer(m_device, stagingBuffer, nullptr);
-		//vkFreeMemory(m_device, stagingBufferMemory, nullptr);
 		vmaDestroyBuffer(m_allocator, stagingBuffer, stagingBufferMemory);
 	}
 
@@ -1894,35 +1768,6 @@ private:
 
 	void createVertexBuffer()
 	{
-#if 0
-		VkDeviceSize bufferSize = sizeof(g_vertices[0]) * g_vertices.size();
-
-		VkBuffer stagingBuffer;
-		VkDeviceMemory stagingBufferMemory;
-		createBuffer(
-			bufferSize,
-			VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-			VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-			stagingBuffer,
-			stagingBufferMemory);
-
-		void* data;
-		vkMapMemory(m_device, stagingBufferMemory, 0, bufferSize, 0, &data);
-		memcpy(data, g_vertices.data(), (size_t)bufferSize);
-		vkUnmapMemory(m_device, stagingBufferMemory);
-
-		createBuffer(
-			bufferSize,
-			VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
-			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-			m_vertexBuffer,
-			m_vertexBufferMemory);
-
-		copyBuffer(stagingBuffer, m_vertexBuffer, bufferSize);
-
-		vkDestroyBuffer(m_device, stagingBuffer, nullptr);
-		vkFreeMemory(m_device, stagingBufferMemory, nullptr);
-#else
 		VkDeviceSize bufferSize = sizeof(g_vertices[0]) * g_vertices.size();
 
 		VkBuffer stagingBuffer;
@@ -1949,40 +1794,10 @@ private:
 		copyBuffer(stagingBuffer, m_vertexBuffer, bufferSize);
 
 		vmaDestroyBuffer(m_allocator, stagingBuffer, stagingBufferMemory);
-#endif
 	}
 
 	void createIndexBuffer()
 	{
-#if 0
-		VkDeviceSize bufferSize = sizeof(g_indices[0]) * g_indices.size();
-
-		VkBuffer stagingBuffer;
-		VkDeviceMemory stagingBufferMemory;
-		createBuffer(
-			bufferSize,
-			VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-			VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-			stagingBuffer,
-			stagingBufferMemory);
-
-		void* data;
-		vkMapMemory(m_device, stagingBufferMemory, 0, bufferSize, 0, &data);
-		memcpy(data, g_indices.data(), (size_t)bufferSize);
-		vkUnmapMemory(m_device, stagingBufferMemory);
-
-		createBuffer(
-			bufferSize,
-			VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
-			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-			m_indexBuffer,
-			m_indexBufferMemory);
-
-		copyBuffer(stagingBuffer, m_indexBuffer, bufferSize);
-
-		vkDestroyBuffer(m_device, stagingBuffer, nullptr);
-		vkFreeMemory(m_device, stagingBufferMemory, nullptr);
-#else
 		VkDeviceSize bufferSize = sizeof(g_indices[0]) * g_indices.size();
 
 		VkBuffer stagingBuffer;
@@ -2009,27 +1824,10 @@ private:
 		copyBuffer(stagingBuffer, m_indexBuffer, bufferSize);
 
 		vmaDestroyBuffer(m_allocator, stagingBuffer, stagingBufferMemory);
-#endif
 	}
 
 	void createUniformBuffers()
 	{
-#if 0
-		VkDeviceSize bufferSize = sizeof(UniformBufferObject);
-
-		m_uniformBuffers.resize(m_swapChainImages.size());
-		m_uniformBuffersMemory.resize(m_swapChainImages.size());
-
-		for (size_t i = 0; i < m_swapChainImages.size(); ++i)
-		{
-			createBuffer(
-				bufferSize,
-				VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
-				VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-				m_uniformBuffers[i],
-				m_uniformBuffersMemory[i]);
-		}
-#else
 		VkDeviceSize bufferSize = sizeof(UniformBufferObject);
 
 		m_uniformBuffers.resize(m_swapChainImages.size());
@@ -2044,7 +1842,6 @@ private:
 				m_uniformBuffers[i],
 				m_uniformBuffersMemory[i]);
 		}
-#endif
 	}
 
 	void createDescriptorPool()
@@ -2271,8 +2068,6 @@ private:
 		// which could change after a recreation, we'll clean it up in cleanupSwapChain.
 		for (size_t i = 0; i < m_swapChainImages.size(); ++i)
 		{
-			//vkDestroyBuffer(m_device, m_uniformBuffers[i], nullptr);
-			//vkFreeMemory(m_device, m_uniformBuffersMemory[i], nullptr);
 			vmaDestroyBuffer(m_allocator, m_uniformBuffers[i], m_uniformBuffersMemory[i]);
 		}
 
@@ -2284,8 +2079,6 @@ private:
 		}
 
 		vkDestroyImageView(m_device, m_depthImageView, nullptr);
-		//vkDestroyImage(m_device, m_depthImage, nullptr);
-		//vkFreeMemory(m_device, m_depthImageMemory, nullptr);
 		vmaDestroyImage(m_allocator, m_depthImage, m_depthImageMemory);
 
 		vkDestroyPipeline(m_device, m_graphicsPipeline, nullptr);
@@ -2456,14 +2249,6 @@ private:
 		ubo.proj = glm::perspective(glm::radians(45.0f), (float) m_swapChainExtent.width / (float) m_swapChainExtent.height, 0.1f, 10.0f);
 		ubo.proj[1][1] *= -1;
 
-		/*
-		void *data = nullptr;
-		//vkMapMemory(m_device, m_uniformBuffersMemory[currentImage], 0, VK_WHOLE_SIZE, 0, &data);
-		vkMapMemory(m_device, m_uniformBuffersMemory[currentImage], 0, sizeof(ubo), 0, &data);
-		std::memcpy(data, &ubo, sizeof(ubo));
-		vkUnmapMemory(m_device, m_uniformBuffersMemory[currentImage]);
-		*/
-
 		void *data = nullptr;
 		vmaMapMemory(m_allocator, m_uniformBuffersMemory[currentImage], &data);
 		std::memcpy(data, &ubo, sizeof(ubo));
@@ -2489,25 +2274,16 @@ private:
 
 		for (size_t i = 0; i < m_swapChainImages.size(); ++i)
 		{
-			//vkDestroyBuffer(m_device, m_uniformBuffers[i], nullptr);
-			//vkFreeMemory(m_device, m_uniformBuffersMemory[i], nullptr);
 			vmaDestroyBuffer(m_allocator, m_uniformBuffers[i], m_uniformBuffersMemory[i]);
 		}
 
-		//vkDestroyBuffer(m_device, m_indexBuffer, nullptr);
-		//vkFreeMemory(m_device, m_indexBufferMemory, nullptr);
 		vmaDestroyBuffer(m_allocator, m_indexBuffer, m_indexBufferMemory);
 
-		// vkDestroyBuffer(m_device, m_vertexBuffer, nullptr);
-		// // Memory that is bound to a buffer object may be freed once the buffer is no longer used, so let's free it after the buffer has been destroyed.
-		// vkFreeMemory(m_device, m_vertexBufferMemory, nullptr);
 		vmaDestroyBuffer(m_allocator, m_vertexBuffer, m_vertexBufferMemory);
 
 		vkDestroySampler(m_device, m_textureImageSampler, nullptr);
 
 		vkDestroyImageView(m_device, m_textureImageView, nullptr);
-		//vkDestroyImage(m_device, m_textureImage, nullptr);
-		//vkFreeMemory(m_device, m_textureImageMemory, nullptr);
 		vmaDestroyImage(m_allocator, m_textureImage, m_textureImageMemory);
 
 		// We should delete the framebuffers before the image views and render pass that they are based on, but only after we've finished rendering
@@ -2517,8 +2293,6 @@ private:
 		}
 
 		vkDestroyImageView(m_device, m_depthImageView, nullptr);
-		//vkDestroyImage(m_device, m_depthImage, nullptr);
-		//vkFreeMemory(m_device, m_depthImageMemory, nullptr);
 		vmaDestroyImage(m_allocator, m_depthImage, m_depthImageMemory);
 
 		vkDestroyPipeline(m_device, m_graphicsPipeline, nullptr);
@@ -2703,24 +2477,20 @@ private:
 	VkBuffer m_vertexBuffer = VK_NULL_HANDLE;
 	// memory for the vertex buffer
 	VmaAllocation m_vertexBufferMemory = VK_NULL_HANDLE;
-	//VkDeviceMemory m_vertexBufferMemory = VK_NULL_HANDLE;
 
 	// a buffer to hold indices of the mesh
 	VkBuffer m_indexBuffer = VK_NULL_HANDLE;
 	// the actual memory allocated for the indices
 	VmaAllocation m_indexBufferMemory = VK_NULL_HANDLE;
-	//VkDeviceMemory m_indexBufferMemory = VK_NULL_HANDLE;
 
 	// buffers for storing uniforms for the shaders
 	// We have an array of them because multiple frames may be in flight at the same time and
 	// we don't want to update the buffer in preparation of the next frame while a previous one is still reading from it
 	std::vector<VkBuffer> m_uniformBuffers;
 	std::vector<VmaAllocation> m_uniformBuffersMemory;
-	//std::vector<VkDeviceMemory> m_uniformBuffersMemory;
 
 	// texture and its associated memory and view
 	VkImage m_textureImage = VK_NULL_HANDLE;
-	//VkDeviceMemory m_textureImageMemory = VK_NULL_HANDLE;
 	VmaAllocation m_textureImageMemory = VK_NULL_HANDLE;
 	VkImageView m_textureImageView = VK_NULL_HANDLE;
 	VkSampler m_textureImageSampler = VK_NULL_HANDLE;
@@ -2728,7 +2498,6 @@ private:
 	// texture for the depth buffer
 	VkImage m_depthImage = VK_NULL_HANDLE;
 	VmaAllocation m_depthImageMemory = VK_NULL_HANDLE;
-	//VkDeviceMemory m_depthImageMemory = VK_NULL_HANDLE;
 	VkImageView m_depthImageView = VK_NULL_HANDLE;
 };
 
